@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-起点中文网排行榜扫描工具
+小说排行榜扫描工具
 自动抓取榜单数据，分析分类/标题/简介/作者等维度，生成报告。
 
 用法:
@@ -17,9 +17,17 @@ import logging
 import os
 from datetime import datetime
 
-from config import RANKINGS, DEFAULT_OUTPUT_DIR
+from config import (
+    ALL_RANKINGS,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_SITE,
+    SITE_RANKINGS,
+    get_site_name,
+    get_site_rankings,
+)
 from session import QidianSession
 from scraper.ranking import scrape_all_rankings
+from scraper.fanqie import scrape_all_fanqie_rankings
 from scraper.detail import fetch_details_batch
 from analysis.filter import filter_books
 from analysis.genre import analyze_genre
@@ -51,7 +59,7 @@ def save_json(data, filepath):
     logging.info(f"已保存: {filepath}")
 
 
-def load_latest_file(directory, pattern=None):
+def load_latest_file(directory, pattern=None, site=None):
     """加载目录中最新的 JSON 文件"""
     if not os.path.exists(directory):
         return None
@@ -61,9 +69,20 @@ def load_latest_file(directory, pattern=None):
     if not files:
         return None
     files.sort(reverse=True)
-    path = os.path.join(directory, files[0])
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+
+    for filename in files:
+        path = os.path.join(directory, filename)
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if site and isinstance(data, dict):
+            payload_site = data.get("site") or DEFAULT_SITE
+            if payload_site != site:
+                continue
+
+        return data
+
+    return None
 
 
 def _coerce_position(value):
@@ -175,19 +194,21 @@ def merge_ranked_books(books, default_rank=None):
     return result
 
 
-def merge_ranking_data(ranking_data):
+def merge_ranking_data(ranking_data, site=None):
     """合并 scrape_all_rankings 返回的 {rank_key: [books]} 数据。"""
     books = []
     for rank_key, rank_books in (ranking_data or {}).items():
         for book in rank_books:
             item = dict(book)
             item.setdefault("rankType", rank_key)
+            if site:
+                item.setdefault("site", site)
             books.append(item)
     return merge_ranked_books(books)
 
 
 def _book_report_sort_key(book):
-    rank_order = {rank: index for index, rank in enumerate(RANKINGS)}
+    rank_order = {rank: index for index, rank in enumerate(ALL_RANKINGS)}
     appearances = book.get("rankAppearances") or _collect_rank_appearances(book)
     keys = []
     for appearance in appearances:
@@ -240,13 +261,13 @@ def build_report_book_snapshot(books, limit=REPORT_BOOK_SAMPLE_LIMIT):
     return snapshot
 
 
-def load_latest_report_books(output_dir):
+def load_latest_report_books(output_dir, site=None):
     """加载报告可用的最近书籍样本，用于兼容旧版 analysis JSON。"""
     for directory, pattern in (
         (os.path.join(output_dir, "analysis"), "filtered"),
         (os.path.join(output_dir, "details"), "all_details"),
     ):
-        data = load_latest_file(directory, pattern)
+        data = load_latest_file(directory, pattern, site=site)
         if data and data.get("books"):
             return build_report_book_snapshot(data.get("books", []))
     return []
@@ -259,23 +280,30 @@ def _books_from_payload(payload, default_rank=None):
     if not isinstance(payload, dict):
         return []
 
+    site = payload.get("site")
     if isinstance(payload.get("rankings"), dict):
-        return merge_ranking_data(payload["rankings"])
+        return merge_ranking_data(payload["rankings"], site=site)
 
     rank_key = payload.get("rankKey") or default_rank
-    return merge_ranked_books(payload.get("books", []), default_rank=rank_key)
+    books = []
+    for book in payload.get("books", []) or []:
+        item = dict(book)
+        if site:
+            item.setdefault("site", site)
+        books.append(item)
+    return merge_ranked_books(books, default_rank=rank_key)
 
 
-def load_latest_raw_books(output_dir):
+def load_latest_raw_books(output_dir, site=None):
     """加载最近一次 scrape 结果；优先使用 all_rankings 快照。"""
     raw_dir = os.path.join(output_dir, "raw")
-    snapshot = load_latest_file(raw_dir, "all_rankings")
+    snapshot = load_latest_file(raw_dir, "all_rankings", site=site)
     if snapshot:
         return _books_from_payload(snapshot)
 
     books = []
-    for rank_key in RANKINGS:
-        data = load_latest_file(raw_dir, f"{rank_key}_")
+    for rank_key in get_site_rankings(site):
+        data = load_latest_file(raw_dir, f"{rank_key}_", site=site)
         if data:
             books.extend(_books_from_payload(data, default_rank=rank_key))
     return merge_ranked_books(books)
@@ -283,33 +311,78 @@ def load_latest_raw_books(output_dir):
 
 # ─── 子命令实现 ──────────────────────────────────────────────
 
+def _arg_site(args):
+    return getattr(args, "site", DEFAULT_SITE) or DEFAULT_SITE
+
+
+def _validate_rankings(site, rank_keys):
+    rankings = get_site_rankings(site)
+    unknown = [key for key in (rank_keys or []) if key not in rankings]
+    if unknown:
+        valid = " ".join(rankings)
+        raise SystemExit(
+            f"未知{get_site_name(site)}榜单: {', '.join(unknown)}\n"
+            f"可选榜单: {valid}"
+        )
+
+
+def _attach_site_to_rankings(ranking_data, site):
+    for books in (ranking_data or {}).values():
+        for book in books:
+            book.setdefault("site", site)
+    return ranking_data
+
+
+def _input_site(data, args):
+    if isinstance(data, dict) and data.get("site"):
+        return data["site"]
+    return _arg_site(args)
+
+
 def cmd_scrape(args):
     """抓取榜单列表"""
+    site = _arg_site(args)
+    site_name = get_site_name(site)
+    rankings_config = get_site_rankings(site)
+    _validate_rankings(site, args.rankings)
+
     session = QidianSession(proxy=args.proxy, cookie=args.cookie)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    all_data = scrape_all_rankings(
-        session,
-        rank_keys=args.rankings,
-        max_pages=args.pages,
-        strategy=args.strategy,
-    )
+    if site == "fanqie":
+        all_data = scrape_all_fanqie_rankings(
+            session,
+            rank_keys=args.rankings,
+            max_pages=args.pages,
+        )
+    else:
+        all_data = scrape_all_rankings(
+            session,
+            rank_keys=args.rankings,
+            max_pages=args.pages,
+            strategy=args.strategy,
+        )
+    all_data = _attach_site_to_rankings(all_data, site)
 
     total = 0
     for rank_key, books in all_data.items():
         total += len(books)
         filepath = os.path.join(args.output_dir, "raw", f"{rank_key}_{timestamp}.json")
         save_json({
+            "site": site,
+            "siteName": site_name,
             "rankKey": rank_key,
-            "rankName": RANKINGS[rank_key]["name"],
+            "rankName": rankings_config[rank_key]["name"],
             "timestamp": datetime.now().isoformat(),
             "count": len(books),
             "books": books,
         }, filepath)
 
-    merged_books = merge_ranking_data(all_data)
+    merged_books = merge_ranking_data(all_data, site=site)
     snapshot_path = os.path.join(args.output_dir, "raw", f"all_rankings_{timestamp}.json")
     save_json({
+        "site": site,
+        "siteName": site_name,
         "timestamp": datetime.now().isoformat(),
         "rankingCount": len(all_data),
         "rawCount": total,
@@ -318,8 +391,9 @@ def cmd_scrape(args):
         "books": merged_books,
     }, snapshot_path)
 
-    print(f"\n抓取完成: {total} 条榜单记录，去重后 {len(merged_books)} 本书（{len(all_data)} 个榜单）")
+    print(f"\n{site_name}抓取完成: {total} 条榜单记录，去重后 {len(merged_books)} 本书（{len(all_data)} 个榜单）")
     return {
+        "site": site,
         "timestamp": timestamp,
         "rankings": all_data,
         "books": merged_books,
@@ -328,6 +402,8 @@ def cmd_scrape(args):
 
 def cmd_detail(args, books=None):
     """获取书籍详情"""
+    site = _arg_site(args)
+    site_name = get_site_name(site)
     session = QidianSession(proxy=args.proxy, cookie=args.cookie)
 
     # 加载榜单数据
@@ -337,23 +413,30 @@ def cmd_detail(args, books=None):
     elif input_path:
         with open(input_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
+        site = _input_site(raw_data, args)
+        site_name = get_site_name(site)
         books = _books_from_payload(raw_data)
     else:
-        books = load_latest_raw_books(args.output_dir)
+        books = load_latest_raw_books(args.output_dir, site=site)
 
     if not books:
         print("没有找到榜单数据，请先运行 scrape 命令")
         return
 
-    print(f"准备获取 {len(books)} 本书的详情（limit={args.limit}）")
-
-    details_dir = os.path.join(args.output_dir, "details")
-    results = fetch_details_batch(session, books, limit=args.limit, output_dir=details_dir)
+    if site == "fanqie":
+        results = books[:args.limit] if args.limit else books
+        print(f"番茄榜单已包含基础详情，复用 {len(results)} 本书（limit={args.limit}）")
+    else:
+        print(f"准备获取 {len(books)} 本书的详情（limit={args.limit}）")
+        details_dir = os.path.join(args.output_dir, "details")
+        results = fetch_details_batch(session, books, limit=args.limit, output_dir=details_dir)
 
     # 保存合并结果
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = os.path.join(args.output_dir, "details", f"all_details_{timestamp}.json")
     save_json({
+        "site": site,
+        "siteName": site_name,
         "timestamp": datetime.now().isoformat(),
         "count": len(results),
         "books": results,
@@ -366,13 +449,17 @@ def cmd_detail(args, books=None):
 def cmd_filter(args):
     """筛选书籍"""
     # 加载详情数据
+    site = _arg_site(args)
+    site_name = get_site_name(site)
     input_path = getattr(args, "input", None)
     if input_path:
         with open(input_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        site = _input_site(data, args)
+        site_name = get_site_name(site)
         books = data.get("books", [])
     else:
-        data = load_latest_file(os.path.join(args.output_dir, "details"), "all_details")
+        data = load_latest_file(os.path.join(args.output_dir, "details"), "all_details", site=site)
         if not data:
             print("没有找到详情数据，请先运行 detail 命令")
             return
@@ -384,6 +471,8 @@ def cmd_filter(args):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = os.path.join(args.output_dir, "analysis", f"filtered_{timestamp}.json")
     save_json({
+        "site": site,
+        "siteName": site_name,
         "timestamp": datetime.now().isoformat(),
         "totalBefore": len(books),
         "totalAfter": len(filtered),
@@ -399,16 +488,20 @@ def cmd_filter(args):
 def cmd_analyze(args):
     """运行分析"""
     # 加载筛选后数据
+    site = _arg_site(args)
+    site_name = get_site_name(site)
     input_path = getattr(args, "input", None)
     if input_path:
         with open(input_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        site = _input_site(data, args)
+        site_name = get_site_name(site)
         books = data.get("books", [])
     else:
-        data = load_latest_file(os.path.join(args.output_dir, "analysis"), "filtered")
+        data = load_latest_file(os.path.join(args.output_dir, "analysis"), "filtered", site=site)
         if not data:
             # 如果没有筛选数据，尝试加载详情数据
-            data = load_latest_file(os.path.join(args.output_dir, "details"), "all_details")
+            data = load_latest_file(os.path.join(args.output_dir, "details"), "all_details", site=site)
         if not data:
             print("没有找到数据，请先运行 scrape + detail + filter 命令")
             return
@@ -443,6 +536,8 @@ def cmd_analyze(args):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = os.path.join(args.output_dir, "analysis", f"analysis_{timestamp}.json")
     save_json({
+        "site": site,
+        "siteName": site_name,
         "timestamp": datetime.now().isoformat(),
         "bookCount": len(books),
         "books": build_report_book_snapshot(books),
@@ -456,20 +551,25 @@ def cmd_analyze(args):
 def cmd_report(args):
     """生成 Markdown 报告"""
     # 加载分析数据
+    site = _arg_site(args)
     input_path = getattr(args, "input", None)
     if input_path:
         with open(input_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        site = _input_site(data, args)
     else:
-        data = load_latest_file(os.path.join(args.output_dir, "analysis"), "analysis")
+        data = load_latest_file(os.path.join(args.output_dir, "analysis"), "analysis", site=site)
         if not data:
             print("没有找到分析数据，请先运行 analyze 命令")
             return
 
     if not data.get("books") and not input_path:
-        books = load_latest_report_books(args.output_dir)
+        books = load_latest_report_books(args.output_dir, site=site)
         if books:
             data["books"] = books
+
+    data.setdefault("site", site)
+    data.setdefault("siteName", get_site_name(site))
 
     report_text = generate_report(data)
 
@@ -489,8 +589,9 @@ def cmd_report(args):
 
 def cmd_full(args):
     """完整流水线"""
+    site_name = get_site_name(_arg_site(args))
     print("=" * 60)
-    print("  起点中文网排行榜扫描 - 完整流水线")
+    print(f"  {site_name}排行榜扫描 - 完整流水线")
     print("=" * 60)
     print()
 
@@ -529,24 +630,30 @@ def cmd_full(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="起点中文网排行榜扫描工具 - 抓取榜单数据，分析题材趋势",
+        description="小说排行榜扫描工具 - 抓取榜单数据，分析题材趋势",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
-  %(prog)s full                              # 完整流水线
-  %(prog)s full --pages 2 --limit 30         # 限制范围快速测试
-  %(prog)s scrape                            # 只抓取榜单
-  %(prog)s scrape --rankings sanjiang strong  # 只抓三江和强推
-  %(prog)s detail --limit 20                 # 只获取前20本详情
-  %(prog)s analyze                           # 运行分析
+  %(prog)s full --strategy mobile            # 起点完整流水线
+  %(prog)s full --site fanqie                 # 番茄完整流水线
+  %(prog)s full --site fanqie --pages 1       # 番茄快速测试
+  %(prog)s scrape --rankings sanjiang strong  # 起点只抓三江和强推
+  %(prog)s scrape --site fanqie --rankings male_read female_new
+  %(prog)s detail --limit 20                  # 只获取前20本详情
   %(prog)s analyze --analyses genre title     # 只运行指定分析
-  %(prog)s report                            # 生成报告
+  %(prog)s report                             # 生成报告
 
-榜单类型:
+起点榜单:
   sanjiang  三江推荐 (编辑推荐的上升期新书)
   strong    强推榜   (编辑强推的重点书)
   newbook   新书榜   (新发布书籍排名)
   hotsales  畅销榜   (VIP订阅畅销书)
+
+番茄榜单:
+  male_read    男频阅读榜
+  male_new     男频新书榜
+  female_read  女频阅读榜
+  female_new   女频新书榜
         """,
     )
 
@@ -556,8 +663,8 @@ def main():
 
     # scrape
     p_scrape = subparsers.add_parser("scrape", help="抓取榜单列表")
-    p_scrape.add_argument("--rankings", nargs="+", choices=list(RANKINGS.keys()),
-                          default=None, help="指定榜单 (默认全部)")
+    p_scrape.add_argument("--rankings", nargs="+",
+                          default=None, help="指定榜单 (默认当前站点全部)")
     p_scrape.add_argument("--pages", type=int, default=5, help="每个榜单最大页数 (默认5)")
     p_scrape.add_argument("--strategy", choices=["auto", "desktop", "mobile"],
                           default="auto", help="抓取策略 (默认auto)")
@@ -587,7 +694,7 @@ def main():
 
     # full
     p_full = subparsers.add_parser("full", help="完整流水线 (scrape→detail→filter→analyze→report)")
-    p_full.add_argument("--rankings", nargs="+", choices=list(RANKINGS.keys()),
+    p_full.add_argument("--rankings", nargs="+",
                         default=None, help="指定榜单")
     p_full.add_argument("--pages", type=int, default=5, help="每个榜单最大页数")
     p_full.add_argument("--strategy", choices=["auto", "desktop", "mobile"],
@@ -598,6 +705,8 @@ def main():
 
     # 全局选项
     for sub in [p_scrape, p_detail, p_filter, p_analyze, p_report, p_full]:
+        sub.add_argument("--site", choices=list(SITE_RANKINGS.keys()), default=DEFAULT_SITE,
+                         help="站点: qidian 或 fanqie (默认qidian)")
         sub.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="输出目录")
         sub.add_argument("--proxy", help="HTTP代理")
         sub.add_argument("--cookie", help="Cookie字符串")

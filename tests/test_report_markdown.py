@@ -78,6 +78,48 @@ class ReportMarkdownTest(unittest.TestCase):
         self.assertEqual(books[0]["customField"], {"nested": "value"})
         self.assertEqual(books[0]["synopsis"], "完整简介不应被截断。")
 
+    def test_fanqie_report_uses_site_and_rank_names(self):
+        report = generate_report({
+            "site": "fanqie",
+            "siteName": "番茄小说",
+            "timestamp": "2026-06-03T12:00:00",
+            "bookCount": 1,
+            "books": [
+                {
+                    "bookId": "1",
+                    "site": "fanqie",
+                    "title": "甲书",
+                    "rankAppearances": [{"rankType": "male_read", "rankPosition": 1}],
+                }
+            ],
+            "analyses": {},
+        })
+
+        self.assertIn("# 番茄小说排行榜分析报告", report)
+        self.assertIn("男频阅读榜#1", report)
+
+    def test_fanqie_report_decodes_font_mapped_text(self):
+        report = generate_report({
+            "site": "fanqie",
+            "siteName": "番茄小说",
+            "timestamp": "2026-06-03T12:00:00",
+            "bookCount": 1,
+            "books": [
+                {
+                    "bookId": "1",
+                    "site": "fanqie",
+                    "title": "领：苦痛",
+                    "synopsis_short": "养",
+                    "rankAppearances": [{"rankType": "male_read", "rankPosition": 1}],
+                }
+            ],
+            "analyses": {},
+        })
+
+        self.assertIn("领主：我在苦痛世界", report)
+        self.assertIn("养成少女", report)
+        self.assertNotIn("", report)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,8 @@ import re
 from collections import Counter
 from datetime import datetime
 
-from config import AUTHOR_LEVELS, RANKINGS
+from config import AUTHOR_LEVELS, ALL_RANKINGS, get_rank_name, get_site_name, get_site_rankings
+from scraper.fanqie import decode_fanqie_font_text
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +20,16 @@ def generate_report(data):
     从分析数据生成 Markdown 报告。
     data 结构: {"timestamp", "bookCount", "books", "analyses": {...}}
     """
+    data = _decode_report_value(data)
     analyses = data.get("analyses", {})
     books = data.get("books") or data.get("bookSamples") or []
     book_count = data.get("bookCount", 0) or len(books)
     timestamp = data.get("timestamp", datetime.now().isoformat())
+    site = data.get("site") or _site_from_books(books)
+    site_name = data.get("siteName") or get_site_name(site)
 
     sections = [
-        _header(timestamp, book_count, analyses, books),
+        _header(timestamp, book_count, analyses, books, site, site_name),
         _overview(analyses, books),
         _rank_portrait_section(books),
         _highlight_books_section(books),
@@ -42,20 +46,23 @@ def generate_report(data):
     return "\n\n".join(s for s in sections if s)
 
 
-def _header(timestamp, book_count, analyses, books):
+def _header(timestamp, book_count, analyses, books, site, site_name):
     """报告头部。"""
     rank_names = _rank_names_from_books(books)
     if not rank_names:
         genre = analyses.get("genre", {})
         rank_names = [_rank_name(key) for key in _rank_keys_in_order(genre.get("byRank", {}))]
 
+    if not rank_names:
+        rank_names = [_rank_name(key) for key in get_site_rankings(site)]
+
     sample_line = f"\n> 报告样本: {len(books)} 本" if books and len(books) != book_count else ""
 
-    return f"""# 起点中文网排行榜分析报告
+    return f"""# {site_name}排行榜分析报告
 
 > 生成时间: {timestamp[:10]}
 > 分析书籍: {book_count} 本{sample_line}
-> 数据来源: {', '.join(rank_names) if rank_names else '三江榜、强推榜、新书榜、畅销榜'}"""
+> 数据来源: {', '.join(rank_names) if rank_names else '未知榜单'}"""
 
 
 def _overview(analyses, books):
@@ -577,14 +584,22 @@ def _original_books_section(books):
 
 
 def _rank_name(rank):
-    return RANKINGS.get(rank, {}).get("name", rank or "未知榜单")
+    return get_rank_name(rank)
 
 
 def _rank_keys_in_order(values):
     keys = list(values.keys()) if isinstance(values, dict) else list(values)
-    known = [key for key in RANKINGS if key in keys]
-    unknown = sorted(key for key in keys if key not in RANKINGS)
+    known = [key for key in ALL_RANKINGS if key in keys]
+    unknown = sorted(key for key in keys if key not in ALL_RANKINGS)
     return known + unknown
+
+
+def _site_from_books(books):
+    for book in books or []:
+        site = book.get("site")
+        if site:
+            return site
+    return "qidian"
 
 
 def _rank_names_from_books(books):
@@ -636,7 +651,7 @@ def _rank_appearances(book):
 
 
 def _appearance_sort_key(appearance):
-    rank_order = {rank: index for index, rank in enumerate(RANKINGS)}
+    rank_order = {rank: index for index, rank in enumerate(ALL_RANKINGS)}
     position = _coerce_int(appearance.get("rankPosition"))
     return (
         rank_order.get(appearance.get("rankType"), 999),
@@ -679,7 +694,7 @@ def _top_books_for_rank(books, rank, limit=4):
 
 
 def _book_plain_title(book):
-    title = book.get("title") or "未命名"
+    title = decode_fanqie_font_text(book.get("title") or "") or "未命名"
     return f"《{title}》"
 
 
@@ -693,6 +708,7 @@ def _book_link(book):
 
 def _original_core_rows(book):
     rows = [
+        ("站点", book.get("site")),
         ("榜单/名次", _book_rank_label(book)),
         ("书籍ID", book.get("bookId")),
         ("书名", book.get("title")),
@@ -705,6 +721,7 @@ def _original_core_rows(book):
         ("评分人数", _book_rating_count_label(book)),
         ("字数", _format_word_count(_word_count(book)) if _word_count(book) else None),
         ("总点击", book.get("totalClicks")),
+        ("阅读数", book.get("readCount")),
         ("总推荐", book.get("totalRecom")),
         ("总收藏", book.get("totalCollect")),
         ("标签", book.get("tags")),
@@ -751,6 +768,7 @@ def _format_original_value(value):
 def _ordered_book_fields(book):
     preferred = [
         "bookId",
+        "site",
         "title",
         "author",
         "authorLevel",
@@ -762,6 +780,7 @@ def _ordered_book_fields(book):
         "score",
         "scoreCount",
         "wordCount",
+        "readCount",
         "synopsis",
         "synopsis_short",
         "tags",
@@ -769,6 +788,7 @@ def _ordered_book_fields(book):
         "totalRecom",
         "totalCollect",
         "latestChapter",
+        "lastUpdateDate",
         "publishDate",
         "authorWorksCount",
         "detailUrl",
@@ -778,6 +798,9 @@ def _ordered_book_fields(book):
         "ranks",
         "rankAppearances",
         "rankCountText",
+        "rankPosDiff",
+        "fanqieCategoryId",
+        "fontEncrypted",
         "scrapedAt",
     ]
 
@@ -785,16 +808,26 @@ def _ordered_book_fields(book):
     for field in preferred:
         value = book.get(field)
         if value not in (None, "", []):
-            ordered[field] = value
+            ordered[field] = _decode_report_value(value)
 
     for field in sorted(book):
         if field in ordered:
             continue
         value = book.get(field)
         if value not in (None, "", []):
-            ordered[field] = value
+            ordered[field] = _decode_report_value(value)
 
     return ordered
+
+
+def _decode_report_value(value):
+    if isinstance(value, str):
+        return decode_fanqie_font_text(value)
+    if isinstance(value, list):
+        return [_decode_report_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _decode_report_value(item) for key, item in value.items()}
+    return value
 
 
 def _synopsis(book):
@@ -810,7 +843,7 @@ def _first_sentence(text):
 
 
 def _clean_text(value):
-    return " ".join(str(value or "").split())
+    return " ".join(decode_fanqie_font_text(str(value or "")).split())
 
 
 def _truncate(text, limit=80):

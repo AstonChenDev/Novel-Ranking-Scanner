@@ -2,10 +2,10 @@
 榜单元数据辅助函数。
 """
 
-from config import RANKINGS
+from config import ALL_RANKINGS
 
 
-RANK_ORDER = {rank: index for index, rank in enumerate(RANKINGS)}
+RANK_ORDER = {rank: index for index, rank in enumerate(ALL_RANKINGS)}
 
 
 def sort_ranks(ranks):

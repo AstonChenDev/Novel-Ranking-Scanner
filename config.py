@@ -1,10 +1,10 @@
 """
-起点中文网排行榜扫描 - 配置常量
+小说排行榜扫描 - 配置常量
 """
 
 # ─── 榜单配置 ──────────────────────────────────────────────────
 
-RANKINGS = {
+QIDIAN_RANKINGS = {
     "sanjiang": {
         "name": "三江推荐",
         "url": "https://www.qidian.com/rank/sanjiang/",
@@ -26,6 +26,67 @@ RANKINGS = {
         "mobile_url": "https://m.qidian.com/rank/hotsales/",
     },
 }
+
+# 兼容旧代码：默认榜单仍然指向起点。
+RANKINGS = QIDIAN_RANKINGS
+
+FANQIE_RANKINGS = {
+    "male_read": {
+        "name": "男频阅读榜",
+        "url": "https://fanqienovel.com/rank/1_2",
+        "gender": "male",
+        "rankType": "read",
+    },
+    "male_new": {
+        "name": "男频新书榜",
+        "url": "https://fanqienovel.com/rank/1_1",
+        "gender": "male",
+        "rankType": "new",
+    },
+    "female_read": {
+        "name": "女频阅读榜",
+        "url": "https://fanqienovel.com/rank/0_2",
+        "gender": "female",
+        "rankType": "read",
+    },
+    "female_new": {
+        "name": "女频新书榜",
+        "url": "https://fanqienovel.com/rank/0_1",
+        "gender": "female",
+        "rankType": "new",
+    },
+}
+
+DEFAULT_SITE = "qidian"
+SITE_NAMES = {
+    "qidian": "起点中文网",
+    "fanqie": "番茄小说",
+}
+SITE_RANKINGS = {
+    "qidian": QIDIAN_RANKINGS,
+    "fanqie": FANQIE_RANKINGS,
+}
+ALL_RANKINGS = {
+    rank_key: config
+    for rankings in SITE_RANKINGS.values()
+    for rank_key, config in rankings.items()
+}
+
+
+def get_site_rankings(site=DEFAULT_SITE):
+    """返回指定站点的榜单配置。"""
+    return SITE_RANKINGS.get(site or DEFAULT_SITE, QIDIAN_RANKINGS)
+
+
+def get_site_name(site=DEFAULT_SITE):
+    """返回站点中文名。"""
+    site = site or DEFAULT_SITE
+    return SITE_NAMES.get(site, site)
+
+
+def get_rank_name(rank_key):
+    """跨站点获取榜单中文名。"""
+    return ALL_RANKINGS.get(rank_key, {}).get("name", rank_key or "未知榜单")
 
 # ─── 分类ID ────────────────────────────────────────────────────
 
@@ -64,6 +125,7 @@ QIDIAN_BASE = "https://www.qidian.com"
 QIDIAN_BOOK = "https://book.qidian.com"
 QIDIAN_MOBILE = "https://m.qidian.com"
 QIDIAN_MOBILE_AJAX = "https://m.qidian.com/majax"
+FANQIE_BASE = "https://fanqienovel.com"
 
 # ─── User-Agent 列表 ──────────────────────────────────────────
 
@@ -80,6 +142,12 @@ MOBILE_USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 "
     "Mobile/15E148 Safari/604.1"
+)
+
+FANQIE_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
 )
 
 # ─── 输出目录 ──────────────────────────────────────────────────
