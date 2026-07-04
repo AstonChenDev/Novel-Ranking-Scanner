@@ -2,23 +2,19 @@
 
 # 📖 小说排行榜扫榜工具
 
-### Novel Ranking Scanner
-
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Qidian%20%7C%20Fanqie-orange)]()
 
 **自动抓取起点中文网 · 番茄小说榜单数据，多维度分析题材趋势，生成结构化报告，为网文选题提供数据支撑。**
 
-*Scrape ranking data from Qidian & Fanqie Novel, analyze genre trends across multiple dimensions, and generate actionable reports for web novel writers.*
-
-[中文](#-快速开始--quick-start) · [English](#-quick-start)
+[🇺🇸 English](README_EN.md)
 
 </div>
 
 ---
 
-## ✨ 功能亮点 · Features
+## ✨ 功能亮点
 
 | 功能 | 说明 |
 |:---|:---|
@@ -30,9 +26,9 @@
 | 🏷️ **跨榜去重** | 同一本书多榜上榜时保留 `rankAppearances`，总体按书去重 |
 
 <details>
-<summary><strong>🗂️ 支持的榜单 · Supported Rankings</strong></summary>
+<summary><strong>🗂️ 支持的榜单</strong></summary>
 
-### 起点中文网 (Qidian)
+### 起点中文网
 
 | 榜单 | Key | 说明 |
 |:---|:---|:---|
@@ -41,7 +37,7 @@
 | 新书榜 | `newbook` | 新发布书籍排名 |
 | 畅销榜 | `hotsales` | VIP 畅销书 |
 
-### 番茄小说 (Fanqie)
+### 番茄小说
 
 | 榜单 | Key | 说明 |
 |:---|:---|:---|
@@ -54,49 +50,44 @@
 
 ---
 
-## 🚀 快速开始 · Quick Start
+## 🚀 快速开始
 
-### 安装 · Installation
+### 安装
 
 ```bash
-# 克隆仓库 · Clone the repo
 git clone https://github.com/Beat1ngHeart/Novel-Ranking-Scanner.git
 cd Novel-Ranking-Scanner
-
-# 创建虚拟环境 · Create virtual environment
 python3 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# 安装依赖 · Install dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 一键扫榜 · One-Command Scan
+### 一键扫榜
 
 ```bash
-# 起点完整流水线 · Qidian full pipeline
+# 起点完整流水线
 python main.py full --strategy mobile
 
-# 番茄完整流水线 · Fanqie full pipeline
+# 番茄完整流水线
 python main.py full --site fanqie --pages 1
 ```
 
-### 快速测试 · Quick Test
+### 快速测试
 
 ```bash
-# 起点：每榜 1 页，限 20 本 · Qidian: 1 page per rank, limit 20
+# 起点：每榜 1 页，限 20 本
 python main.py full --strategy mobile --pages 1 --limit 20
 
-# 番茄：每榜 1 页，限 20 本 · Fanqie: 1 page per rank, limit 20
+# 番茄：每榜 1 页，限 20 本
 python main.py full --site fanqie --pages 1 --limit 20
 ```
 
 ---
 
-## 📋 分步运行 · Step-by-Step
+## 📋 分步运行
 
 <details>
-<summary><strong>起点 · Qidian</strong></summary>
+<summary><strong>起点</strong></summary>
 
 ```bash
 python main.py scrape --strategy mobile          # 1. 抓取榜单
@@ -109,7 +100,7 @@ python main.py report                            # 5. 生成报告
 </details>
 
 <details>
-<summary><strong>番茄 · Fanqie</strong></summary>
+<summary><strong>番茄</strong></summary>
 
 ```bash
 python main.py scrape --site fanqie --pages 1    # 1. 抓取榜单
@@ -122,20 +113,20 @@ python main.py report --site fanqie              # 5. 生成报告
 </details>
 
 <details>
-<summary><strong>高级用法 · Advanced Usage</strong></summary>
+<summary><strong>高级用法</strong></summary>
 
 ```bash
-# 只抓指定榜单 · Scrape specific rankings only
+# 只抓指定榜单
 python main.py scrape --rankings sanjiang strong --strategy mobile
 python main.py scrape --site fanqie --rankings male_read female_new --pages 1
 
-# 只运行指定分析维度 · Run specific analyses only
+# 只运行指定分析维度
 python main.py analyze --analyses genre title crossrank
 
-# 使用代理 · Use proxy
+# 使用代理
 python main.py full --proxy socks5://localhost:1080
 
-# 详细日志 · Verbose logging
+# 详细日志
 python main.py full -v
 ```
 
@@ -143,20 +134,20 @@ python main.py full -v
 
 ---
 
-## 📂 输出目录 · Output Structure
+## 📂 输出目录
 
 ```
 output/
-├── raw/          # 榜单原始 JSON · Raw ranking JSON
-├── details/      # 单书详情缓存 · Per-book detail cache
-├── analysis/     # 筛选 & 分析结果 · Filter & analysis results
-├── reports/      # Markdown 报告 · Final Markdown reports
-└── debug/        # 解析失败时的 HTML · Debug HTML dumps
+├── raw/          # 榜单原始 JSON
+├── details/      # 单书详情缓存
+├── analysis/     # 筛选 & 分析结果
+├── reports/      # Markdown 报告
+└── debug/        # 解析失败时的 HTML
 ```
 
 ---
 
-## 📊 报告示例 · Report Preview
+## 📊 报告示例
 
 生成的 Markdown 报告包含以下章节：
 
@@ -173,10 +164,10 @@ output/
 
 ---
 
-## ⚠️ 注意事项 · Notes
+## ⚠️ 注意事项
 
 <details>
-<summary><strong>反爬与限制 · Anti-Scraping</strong></summary>
+<summary><strong>反爬与限制</strong></summary>
 
 - 起点桌面端页面容易返回探测页，建议优先使用 `--strategy mobile`
 - 番茄部分字段使用字体加密（PUA Unicode），程序会自动解码并标记 `fontEncrypted: true`
@@ -186,7 +177,7 @@ output/
 </details>
 
 <details>
-<summary><strong>运行测试 · Run Tests</strong></summary>
+<summary><strong>运行测试</strong></summary>
 
 ```bash
 python3 -m unittest discover -s tests
@@ -196,30 +187,30 @@ python3 -m unittest discover -s tests
 
 ---
 
-## 📁 项目结构 · Project Structure
+## 📁 项目结构
 
 ```
 小说扫榜/
-├── main.py                  # CLI 入口 · CLI entry point
-├── config.py                # 常量配置 · Constants & config
-├── session.py               # HTTP 会话管理 · Session & retry
-├── requirements.txt         # 依赖 · Dependencies
+├── main.py                  # CLI 入口
+├── config.py                # 常量配置
+├── session.py               # HTTP 会话管理
+├── requirements.txt         # 依赖
 ├── scraper/
-│   ├── ranking.py           # 起点榜单爬取 · Qidian ranking scraper
-│   ├── detail.py            # 起点详情爬取 · Qidian detail scraper
-│   └── fanqie.py            # 番茄榜单爬取 · Fanqie ranking scraper
+│   ├── ranking.py           # 起点榜单爬取
+│   ├── detail.py            # 起点详情爬取
+│   └── fanqie.py            # 番茄榜单爬取
 ├── analysis/
-│   ├── filter.py            # 筛选逻辑 · Filtering
-│   ├── genre.py             # 分类分布 · Genre distribution
-│   ├── title.py             # 标题分析 · Title analysis
-│   ├── synopsis.py          # 简介分析 · Synopsis analysis
-│   ├── author.py            # 作者等级 · Author level
-│   ├── wordcount.py         # 字数分布 · Word count
-│   ├── cross_rank.py        # 跨榜上榜 · Cross-rank
-│   └── ranks.py             # 榜单排序 · Rank ordering
+│   ├── filter.py            # 筛选逻辑
+│   ├── genre.py             # 分类分布
+│   ├── title.py             # 标题分析
+│   ├── synopsis.py          # 简介分析
+│   ├── author.py            # 作者等级
+│   ├── wordcount.py         # 字数分布
+│   ├── cross_rank.py        # 跨榜上榜
+│   └── ranks.py             # 榜单排序
 ├── report/
-│   └── markdown.py          # 报告生成 · Report generator
-└── tests/                   # 单元测试 · Unit tests
+│   └── markdown.py          # 报告生成
+└── tests/                   # 单元测试
 ```
 
 ---
@@ -228,14 +219,12 @@ python3 -m unittest discover -s tests
 
 MIT License — 仅供学习研究，请勿用于商业爬虫或侵犯平台权益。
 
-*For educational and research purposes only. Respect platform Terms of Service.*
-
 ---
 
 <div align="center">
 
 **Built with ❤️ for web novel writers**
 
-[⬆ Back to top](#-小说排行榜扫榜工具)
+[⬆ 回到顶部](#-小说排行榜扫榜工具) · [🇺🇸 English](README_EN.md)
 
 </div>
