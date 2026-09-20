@@ -69,7 +69,7 @@ pip install -r requirements.txt
 python main.py full --strategy mobile
 
 # 番茄完整流水线
-python main.py full --site fanqie --pages 1
+python main.py full --site fanqie --pages 2
 ```
 
 ### 快速测试
@@ -79,7 +79,7 @@ python main.py full --site fanqie --pages 1
 python main.py full --strategy mobile --pages 1 --limit 20
 
 # 番茄：每榜 1 页，限 20 本
-python main.py full --site fanqie --pages 1 --limit 20
+python main.py full --site fanqie --pages 2 --limit 20
 ```
 
 ---
@@ -103,7 +103,7 @@ python main.py report                            # 5. 生成报告
 <summary><strong>番茄</strong></summary>
 
 ```bash
-python main.py scrape --site fanqie --pages 1    # 1. 抓取榜单
+python main.py scrape --site fanqie --pages 2    # 1. 抓取完整分类榜
 python main.py detail --site fanqie              # 2. 复用榜单详情（可跳过）
 python main.py filter --site fanqie              # 3. 筛选
 python main.py analyze --site fanqie             # 4. 分析
@@ -111,6 +111,43 @@ python main.py report --site fanqie              # 5. 生成报告
 ```
 
 </details>
+
+<details>
+<summary><strong>提交到独立采集写入服务</strong></summary>
+
+`ingest` 不会改变现有的抓榜命令。它把最新榜单快照转换为跨平台的批量导入协议；
+同一本书出现在多个榜单时会保留多条榜单关系。服务端 URL 和 token 可以通过环境变量
+`RANK_INGEST_URL`、`RANK_INGEST_TOKEN` 提供，也可以用命令行参数覆盖。
+
+```bash
+# 先抓榜，再检查规范化 JSON（不发请求）
+python main.py scrape --site fanqie --pages 2
+python main.py ingest --site fanqie --dry-run --output /tmp/rank-ingestion.json
+
+# 推送最新快照；失败会自动重试，最终失败返回非零退出码
+export RANK_INGEST_URL=http://127.0.0.1:19501/internal/v1/rank-snapshots
+export RANK_INGEST_TOKEN='replace-with-internal-token'
+python main.py ingest --site fanqie --retries 4
+
+# 也可以直接推送指定快照，`push` 是 `ingest` 的别名
+python main.py push --input output/raw/all_rankings_20260919_080000.json
+```
+
+协议顶层包含 `schema_version`、`source` 和 `books`。每个书籍行使用稳定的
+`site`、`book_id`、`rank_type`、`rank_scope_key`、`rank_position` 等字段，并保留无法预知的平台特有
+字段到 `extra`，方便将来接入其他平台；`rank_scope_key` 是分类/分区的稳定 ID，不能用展示分类名代替。
+服务端按“平台 + 榜型 + 维度 + 日期”保存快照，同一本书仍按“平台 + 书籍 ID”复用正文采集任务。
+
+</details>
+
+### 每日调度
+
+项目根目录的 `run_daily_rank_sync.sh` 默认只抓番茄，再导入独立采集服务；正文由常驻 worker 消费，日榜命令不重复启动 worker。
+请由外部 cron、systemd timer 或容器调度器每天调用，令牌通过 `EXTERNAL_RANK_INGESTION_TOKEN` 或 `RANK_ENV_FILE` 提供。
+每次只导入本批次新文件，不回退历史快照。需要起点时再显式设置 `RANK_SITES=fanqie,qidian`。
+
+番茄已使用官网的 `offset/limit` API：每页50本，普通分类榜100本只需两页。`--pages` 是安全上限，
+如果配置页数不足上游总数，会明确失败，不发布不完整榜单。旧 HTML 只含前10本，不能用 `?page=` 翻页。
 
 <details>
 <summary><strong>高级用法</strong></summary>

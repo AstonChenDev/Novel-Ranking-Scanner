@@ -112,6 +112,7 @@ PENALTY_PAUSE = 60              # 连续3次403后暂停（秒）
 MAX_RETRIES = 3                 # 最大重试次数
 REQUEST_TIMEOUT = 20            # 请求超时（秒）
 MAX_PAGES_PER_RANK = 5          # 每个榜单最大翻页数
+FANQIE_MAX_PAGES_PER_RANK = 10  # 防失控的页数上限；API每页50本，通常两页抓完100名
 CONSECUTIVE_403_THRESHOLD = 3   # 触发暂停的连续403次数
 
 # ─── 筛选参数 ──────────────────────────────────────────────────

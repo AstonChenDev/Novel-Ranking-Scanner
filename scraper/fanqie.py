@@ -12,12 +12,19 @@ import os
 import re
 import subprocess
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
-from config import FANQIE_BASE, FANQIE_RANKINGS, FANQIE_USER_AGENT, MAX_PAGES_PER_RANK
+from config import FANQIE_BASE, FANQIE_RANKINGS, FANQIE_USER_AGENT, FANQIE_MAX_PAGES_PER_RANK
 
 
 logger = logging.getLogger(__name__)
+
+# 官网页面首屏仅10本，但公开分页接口已验证支持50本/次，完整100名只需两页。
+FANQIE_PAGE_SIZE = 50
+
+
+class IncompleteRankingError(RuntimeError):
+    """缺页、版本漂移或重复页必须中止发布，不能当作完整日榜。"""
 
 
 FANQIE_HEADERS = {
@@ -141,8 +148,14 @@ def extract_initial_state(html):
     try:
         state, _ = decoder.raw_decode(payload)
     except json.JSONDecodeError as exc:
-        logger.warning(f"番茄页面状态 JSON 解析失败: {exc}")
-        return {}
+        # 番茄偶尔把可选字段序列化成 JavaScript 的 undefined，导致严格 JSON
+        # 解码在榜单中途失败；仅替换值位置的 undefined，不执行任意 JS。
+        sanitized = re.sub(r":\s*undefined\b", ": null", payload)
+        try:
+            state, _ = decoder.raw_decode(sanitized)
+        except json.JSONDecodeError:
+            logger.warning(f"番茄页面状态 JSON 解析失败: {exc}")
+            return {}
 
     return state if isinstance(state, dict) else {}
 
@@ -234,6 +247,12 @@ def _record_to_book(record, rank_key, position, category_by_id):
         if value not in (None, ""):
             book[key] = value
 
+    # 榜单分类 ID 是榜单维度，不等同于书籍展示分类；服务端据此区分同一榜型下的不同分类榜。
+    if book.get("fanqieCategoryId"):
+        book["rankScopeKey"] = book["fanqieCategoryId"]
+        if category:
+            book["rankScopeName"] = category
+
     if font_encrypted:
         book["fontEncrypted"] = True
         if (title, author, synopsis, latest_chapter) != (
@@ -312,20 +331,21 @@ def decode_fanqie_font_text(value):
     return "".join(chars)
 
 
-def _build_fanqie_url(rank_key, page=1):
+def _build_fanqie_url(rank_key, page=1, scope_key=None):
     config = FANQIE_RANKINGS[rank_key]
     url = config["url"]
-    if page <= 1:
-        return url
+    if scope_key:
+        url = f"{url.rstrip('/')}_{scope_key}"
+    if page != 1:
+        raise ValueError("番茄榜单 HTML 不支持 page 参数，翻页必须使用 offset API")
+    return url
 
-    sep = "&" if "?" in url else "?"
-    return f"{url}{sep}{urlencode({'page': page})}"
 
-
-def fetch_fanqie_ranking(session, rank_key, page=1):
-    """抓取单页番茄榜单。"""
-    url = _build_fanqie_url(rank_key, page)
-    logger.info(f"[{rank_key}] 番茄榜单请求: page={page}")
+def _fetch_fanqie_html(session, rank_key, scope_key=None):
+    """获取分类导航/首屏状态；HTML 只预置前10本，不用于后续页。"""
+    page = 1
+    url = _build_fanqie_url(rank_key, page, scope_key)
+    logger.info(f"[{rank_key}{':' + str(scope_key) if scope_key else ''}] 番茄榜单请求: page={page}")
     resp = session.safe_get(url, delay_range=(1, 2), extra_headers=FANQIE_HEADERS)
     html = resp.text if resp else ""
 
@@ -343,8 +363,71 @@ def fetch_fanqie_ranking(session, rank_key, page=1):
 
     if not books and html:
         _save_debug_html(html, f"fanqie_{rank_key}")
+    return html
 
-    return books
+
+def fetch_fanqie_rank_page(session, rank_key, scope_key, offset=0, rank_version="", scope_name=""):
+    """请求官网使用的公开分页接口；固定版本，保留真实名次，不生成签名或绕过验证。"""
+    if scope_key is None or not str(scope_key).isdigit():
+        raise IncompleteRankingError("缺少有效分类 ID，不能请求番茄榜单分页")
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset 必须是非负整数")
+    definition = FANQIE_RANKINGS[rank_key]
+    params = {
+        "app_id": 2503, "rank_list_type": 3, "offset": offset, "limit": FANQIE_PAGE_SIZE,
+        "category_id": str(scope_key), "rank_version": str(rank_version),
+        "gender": 1 if definition["gender"] == "male" else 0,
+        "rankMold": 2 if definition["rankType"] == "read" else 1,
+    }
+    url = f"{FANQIE_BASE}/api/rank/category/list?{urlencode(params)}"
+    headers = {**FANQIE_HEADERS, "Accept": "application/json", "Referer": _build_fanqie_url(rank_key, scope_key=scope_key)}
+    response = session.safe_get(url, delay_range=(1, 2), extra_headers=headers)
+    if response is None:
+        raise IncompleteRankingError(f"{rank_key}/{scope_key} offset={offset} 请求失败")
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise IncompleteRankingError(f"{rank_key}/{scope_key} 未返回 JSON，可能需要人工验证") from error
+    if not isinstance(payload, dict) or payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
+        raise IncompleteRankingError(f"{rank_key}/{scope_key} 上游返回错误，停止导入")
+    data = payload["data"]
+    records = data.get("book_list")
+    total = data.get("total_num")
+    # 官网不足100名的分类有时返回字符串总数（如 "38"），完整100名则返回整数。
+    if isinstance(total, str) and total.isdecimal():
+        total = int(total)
+    version = _text(data.get("rankVersion"))
+    if type(total) is int and total == 0 and records is None:
+        records = []
+    if type(total) is int and total == 0 and not records and not version:
+        version = str(rank_version or "empty")
+    if not isinstance(records, list) or type(total) is not int or total < 0 or not version:
+        raise IncompleteRankingError(f"{rank_key}/{scope_key} 缺少榜单总数、版本或书籍数组")
+    if rank_version and version != str(rank_version):
+        raise IncompleteRankingError(f"{rank_key}/{scope_key} 翻页期间榜单版本变化，拒绝混合快照")
+    if len(records) > FANQIE_PAGE_SIZE:
+        raise IncompleteRankingError(f"{rank_key}/{scope_key} 返回数量超过请求页大小")
+    books = []
+    for index, record in enumerate(records, offset + 1):
+        book = _record_to_book(record, rank_key, index, {str(scope_key): scope_name})
+        if book is None:
+            raise IncompleteRankingError(f"{rank_key}/{scope_key} 书籍字段不完整")
+        if book['rankPosition'] != index:
+            raise IncompleteRankingError(f"{rank_key}/{scope_key} 名次不连续，预期{index}，实际{book['rankPosition']}")
+        book["rankScopeKey"] = str(scope_key)
+        book["rankScopeName"] = scope_name or book.get("category") or str(scope_key)
+        book["sourceRankVersion"] = version
+        books.append(book)
+    return books, total, version
+
+
+def fetch_fanqie_ranking(session, rank_key, page=1, scope_key=None):
+    """兼容单页调用；后续页使用真实分页接口而不是无效的 ?page=。"""
+    if scope_key:
+        return fetch_fanqie_rank_page(session, rank_key, scope_key, (page-1)*FANQIE_PAGE_SIZE)[0]
+    if page != 1:
+        raise IncompleteRankingError("翻页必须指定分类 ID")
+    return parse_fanqie_ranking_page(_fetch_fanqie_html(session, rank_key), rank_key)
 
 
 def _curl_get_text(url, cookie=None, proxy=None):
@@ -400,42 +483,83 @@ def _save_debug_html(html, rank_key):
     logger.info(f"调试HTML已保存: {path}")
 
 
-def scrape_fanqie_ranking(session, rank_key, max_pages=MAX_PAGES_PER_RANK):
-    """爬取单个番茄排行榜。"""
+def discover_fanqie_scope_definitions(session, rank_key):
+    """从榜单首页发现平台提供的稳定分类 ID。"""
+    url = _build_fanqie_url(rank_key)
+    html = _fetch_fanqie_html(session, rank_key)
+    if not html:
+        raise IncompleteRankingError(f"{rank_key} 无法获取分类导航")
+    category_names = _category_map(extract_initial_state(html).get("rank", {}))
+    base = urlparse(FANQIE_RANKINGS[rank_key]["url"]).path.rstrip("/")
+    escaped = re.escape(base)
+    scopes = []
+    for match in re.finditer(rf'href=["\'](?:https?://[^"\']+)?{escaped}_(\d+)["\']', html):
+        scope = match.group(1)
+        if scope not in scopes:
+            scopes.append(scope)
+    if not scopes:
+        raise IncompleteRankingError(f"{rank_key} 未发现分类导航，拒绝把首屏当完整榜单")
+    return [(scope, category_names.get(scope, "")) for scope in scopes]
+
+
+def discover_fanqie_scopes(session, rank_key):
+    return [scope for scope, _name in discover_fanqie_scope_definitions(session, rank_key)]
+
+
+def scrape_fanqie_ranking(session, rank_key, max_pages=FANQIE_MAX_PAGES_PER_RANK, scope_keys=None):
+    """抓完指定榜型全部分类；任何分类缺页均中止，避免覆盖为不完整日榜。"""
+    if type(max_pages) is not int or not 1 <= max_pages <= 100:
+        raise ValueError("max_pages 必须是1～100的整数")
     config = FANQIE_RANKINGS[rank_key]
     rank_name = config["name"]
     books = []
-    seen = set()
+    scopes = [(str(scope), "") for scope in scope_keys] if scope_keys is not None else discover_fanqie_scope_definitions(session, rank_key)
+    if not scopes:
+        raise IncompleteRankingError(f"{rank_key} 没有可抓取的分类")
 
     logger.info(f"{'=' * 50}")
     logger.info(f"开始爬取: 番茄小说 {rank_name} ({rank_key})")
     logger.info(f"最大页数: {max_pages}")
 
-    for page in range(1, max_pages + 1):
-        page_books = fetch_fanqie_ranking(session, rank_key, page)
-        if not page_books:
-            logger.info(f"第{page}页无数据，停止翻页")
-            break
-
-        new_books = []
-        for book in page_books:
-            book_id = book.get("bookId")
-            if book_id and book_id not in seen:
+    for scope_key, scope_name in scopes:
+        seen = set()
+        scope_books = []
+        total = None
+        version = ""
+        for page in range(1, max_pages + 1):
+            page_books, page_total, page_version = fetch_fanqie_rank_page(
+                session, rank_key, scope_key, len(scope_books), version, scope_name,
+            )
+            if total is not None and page_total != total:
+                raise IncompleteRankingError(f"{rank_key}/{scope_key} 翻页期间总数改变")
+            total, version = page_total, page_version
+            if total == 0:
+                # 现有导入协议依赖书行标识scope，无法表达“同日把某分类清空”。
+                # 在支持显式空scope发布前，必须中止，不能丢掉该分类后仍声称整榜完整。
+                raise IncompleteRankingError(f"{rank_key}/{scope_key} 返回空分类，当前协议不能安全发布空分类快照")
+            if total > max_pages*FANQIE_PAGE_SIZE:
+                raise IncompleteRankingError(f"{rank_key}/{scope_key} 共{total}本，配置{max_pages}页不足；请增加 --pages")
+            expected = min(FANQIE_PAGE_SIZE, total-len(scope_books))
+            if len(page_books) != expected:
+                raise IncompleteRankingError(f"{rank_key}/{scope_key} 第{page}页缺失，预期{expected}本，实际{len(page_books)}本")
+            for book in page_books:
+                book_id = book.get("bookId")
+                if not book_id or book_id in seen:
+                    raise IncompleteRankingError(f"{rank_key}/{scope_key} 第{page}页出现重复书籍，拒绝发布")
                 seen.add(book_id)
-                new_books.append(book)
-
-        if not new_books:
-            logger.info(f"第{page}页没有新增书籍，停止翻页")
-            break
-
-        logger.info(f"  获取 {len(new_books)} 本书")
-        books.extend(new_books)
+                scope_books.append(book)
+            logger.info("[%s/%s] 已获取 %s/%s 本", rank_key, scope_key, len(scope_books), total)
+            if len(scope_books) == total:
+                break
+        if len(scope_books) != total:
+            raise IncompleteRankingError(f"{rank_key}/{scope_key} 未获取完整榜单")
+        books.extend(scope_books)
 
     logger.info(f"[番茄 {rank_name}] 共获取 {len(books)} 本（去重后）")
     return books
 
 
-def scrape_all_fanqie_rankings(session, rank_keys=None, max_pages=MAX_PAGES_PER_RANK):
+def scrape_all_fanqie_rankings(session, rank_keys=None, max_pages=FANQIE_MAX_PAGES_PER_RANK):
     """爬取所有（或指定）番茄排行榜。"""
     keys = rank_keys or list(FANQIE_RANKINGS.keys())
     all_data = {}

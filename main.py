@@ -9,6 +9,7 @@
   python main.py detail --limit 20       # 只获取前20本详情
   python main.py analyze                 # 只运行分析
   python main.py report                  # 只生成报告
+  python main.py ingest --dry-run        # 导出后端导入格式
 """
 
 import argparse
@@ -21,6 +22,8 @@ from config import (
     ALL_RANKINGS,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SITE,
+    FANQIE_MAX_PAGES_PER_RANK,
+    MAX_PAGES_PER_RANK,
     SITE_RANKINGS,
     get_site_name,
     get_site_rankings,
@@ -38,6 +41,13 @@ from analysis.wordcount import analyze_wordcount
 from analysis.cross_rank import analyze_cross_rank
 from analysis.ranks import sort_ranks
 from report.markdown import generate_report
+from ingestion import (
+    build_ingestion_payload,
+    load_json_file,
+    push_payload,
+    write_json_file,
+    validate_ingestion_result,
+)
 
 
 REPORT_BOOK_SAMPLE_LIMIT = None
@@ -345,6 +355,7 @@ def cmd_scrape(args):
     site_name = get_site_name(site)
     rankings_config = get_site_rankings(site)
     _validate_rankings(site, args.rankings)
+    pages = args.pages if args.pages is not None else (FANQIE_MAX_PAGES_PER_RANK if site == "fanqie" else MAX_PAGES_PER_RANK)
 
     session = QidianSession(proxy=args.proxy, cookie=args.cookie)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -353,21 +364,27 @@ def cmd_scrape(args):
         all_data = scrape_all_fanqie_rankings(
             session,
             rank_keys=args.rankings,
-            max_pages=args.pages,
+            max_pages=pages,
         )
     else:
         all_data = scrape_all_rankings(
             session,
             rank_keys=args.rankings,
-            max_pages=args.pages,
+            max_pages=pages,
             strategy=args.strategy,
         )
     all_data = _attach_site_to_rankings(all_data, site)
 
+    # 榜单采集是发布前置条件：任一请求榜单为空都视为失败，避免把不完整结果覆盖为当天快照。
+    expected_keys = args.rankings or list(rankings_config.keys())
+    missing = [key for key in expected_keys if not all_data.get(key)]
+    if missing:
+        raise SystemExit(f"{site_name}榜单采集不完整，拒绝导入空榜: {', '.join(missing)}")
+
     total = 0
     for rank_key, books in all_data.items():
         total += len(books)
-        filepath = os.path.join(args.output_dir, "raw", f"{rank_key}_{timestamp}.json")
+        filepath = os.path.join(args.output_dir, "raw", f"{site}_{rank_key}_{timestamp}.json")
         save_json({
             "site": site,
             "siteName": site_name,
@@ -379,7 +396,7 @@ def cmd_scrape(args):
         }, filepath)
 
     merged_books = merge_ranking_data(all_data, site=site)
-    snapshot_path = os.path.join(args.output_dir, "raw", f"all_rankings_{timestamp}.json")
+    snapshot_path = os.path.join(args.output_dir, "raw", f"all_rankings_{site}_{timestamp}.json")
     save_json({
         "site": site,
         "siteName": site_name,
@@ -587,6 +604,67 @@ def cmd_report(args):
     return output_path
 
 
+def ingestion_result_summary(result):
+    """日常日志只报告批次数和新增任务数，避免打印数千条任务；原始返回值保持不变。"""
+    if not isinstance(result, dict) or "accepted" not in result:
+        return result
+    tasks = result.get("collection_tasks", 0)
+    return {
+        "accepted": result["accepted"],
+        "snapshot_count": len(result.get("snapshot_ids") or []),
+        "created_tasks": len(tasks) if isinstance(tasks, list) else tasks,
+    }
+
+
+def cmd_ingest(args):
+    """将榜单快照导出或推送到独立 rank-ingestion-service，业务服务只读。
+
+    该命令是可选的，不改变 ``scrape``/``full`` 的既有输出。默认读取
+    ``output/raw/all_rankings_*.json`` 最新快照；使用 ``--output`` 可只
+    生成规范化 JSON 而不发起网络请求，便于调度器和其他语言复用协议。
+    """
+    input_path = getattr(args, "input", None)
+    if input_path:
+        data = load_json_file(input_path)
+        site = _input_site(data, args)
+    else:
+        site = _arg_site(args)
+        data = load_latest_file(os.path.join(args.output_dir, "raw"), "all_rankings", site=site)
+        if not data:
+            raise SystemExit("没有找到榜单快照，请先运行 scrape 命令或使用 --input 指定 JSON")
+
+    payload = build_ingestion_payload(data, site=site)
+    output_path = getattr(args, "output", None)
+    if output_path:
+        write_json_file(payload, output_path)
+        print(f"已导出导入 payload: {output_path}（{payload['count']} 条榜单记录）")
+
+    if getattr(args, "dry_run", False):
+        if not output_path:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return payload
+
+    endpoint = getattr(args, "url", None) or os.getenv("RANK_INGEST_URL", "")
+    if not endpoint:
+        raise SystemExit("未设置导入接口 URL，请使用 --url 或 RANK_INGEST_URL；仅导出请加 --dry-run")
+
+    try:
+        result = push_payload(
+            payload,
+            url=endpoint,
+            token=getattr(args, "token", None),
+            timeout=args.timeout,
+            retries=args.retries,
+        )
+        validate_ingestion_result(result, payload)
+    except Exception as exc:
+        logging.error("榜单导入失败: %s", exc)
+        raise SystemExit(1) from exc
+
+    print(json.dumps(result if getattr(args, "verbose", False) else ingestion_result_summary(result), ensure_ascii=False, indent=2))
+    return result
+
+
 def cmd_full(args):
     """完整流水线"""
     site_name = get_site_name(_arg_site(args))
@@ -665,7 +743,7 @@ def main():
     p_scrape = subparsers.add_parser("scrape", help="抓取榜单列表")
     p_scrape.add_argument("--rankings", nargs="+",
                           default=None, help="指定榜单 (默认当前站点全部)")
-    p_scrape.add_argument("--pages", type=int, default=5, help="每个榜单最大页数 (默认5)")
+    p_scrape.add_argument("--pages", type=int, default=None, help="最大页数（番茄默认10，其他默认5；番茄不足完整榜单时拒绝发布）")
     p_scrape.add_argument("--strategy", choices=["auto", "desktop", "mobile"],
                           default="auto", help="抓取策略 (默认auto)")
 
@@ -692,11 +770,23 @@ def main():
     p_report.add_argument("--input", help="输入分析JSON文件路径")
     p_report.add_argument("--output", "-o", help="输出报告路径")
 
+    # ingest / push
+    p_ingest = subparsers.add_parser(
+        "ingest", aliases=["push"], help="导出或推送榜单快照到后端内部接口"
+    )
+    p_ingest.add_argument("--input", help="输入榜单 JSON 文件（默认读取最新 raw/all_rankings）")
+    p_ingest.add_argument("--output", "-o", help="只导出规范化导入 JSON 到指定路径")
+    p_ingest.add_argument("--url", help="内部导入接口 URL（默认读取 RANK_INGEST_URL）")
+    p_ingest.add_argument("--token", help="内部接口 token（默认读取 RANK_INGEST_TOKEN）")
+    p_ingest.add_argument("--timeout", type=float, default=30.0, help="HTTP 超时秒数（默认30）")
+    p_ingest.add_argument("--retries", type=int, default=3, help="失败重试次数（默认3）")
+    p_ingest.add_argument("--dry-run", action="store_true", help="只转换/导出，不调用后端")
+
     # full
     p_full = subparsers.add_parser("full", help="完整流水线 (scrape→detail→filter→analyze→report)")
     p_full.add_argument("--rankings", nargs="+",
                         default=None, help="指定榜单")
-    p_full.add_argument("--pages", type=int, default=5, help="每个榜单最大页数")
+    p_full.add_argument("--pages", type=int, default=None, help="最大页数（番茄默认10，其他默认5）")
     p_full.add_argument("--strategy", choices=["auto", "desktop", "mobile"],
                         default="auto", help="抓取策略")
     p_full.add_argument("--limit", type=int, help="限制详情获取数量")
@@ -704,7 +794,7 @@ def main():
     p_full.add_argument("--max-level", type=int, default=5, help="最大作者等级")
 
     # 全局选项
-    for sub in [p_scrape, p_detail, p_filter, p_analyze, p_report, p_full]:
+    for sub in [p_scrape, p_detail, p_filter, p_analyze, p_report, p_full, p_ingest]:
         sub.add_argument("--site", choices=list(SITE_RANKINGS.keys()), default=DEFAULT_SITE,
                          help="站点: qidian 或 fanqie (默认qidian)")
         sub.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="输出目录")
@@ -722,6 +812,8 @@ def main():
         "analyze": cmd_analyze,
         "report": cmd_report,
         "full": cmd_full,
+        "ingest": cmd_ingest,
+        "push": cmd_ingest,
     }
 
     cmd_map[args.command](args)
