@@ -24,6 +24,7 @@ from config import (
     DEFAULT_SITE,
     FANQIE_MAX_PAGES_PER_RANK,
     MAX_PAGES_PER_RANK,
+    SHORT_DRAMA_MAX_PAGES_PER_RANK,
     SITE_RANKINGS,
     get_site_name,
     get_site_rankings,
@@ -31,6 +32,7 @@ from config import (
 from session import QidianSession
 from scraper.ranking import scrape_all_rankings
 from scraper.fanqie import scrape_all_fanqie_rankings
+from scraper.short_drama import SHORT_DRAMA_SITES, scrape_all_short_drama_rankings
 from scraper.detail import fetch_details_batch
 from analysis.filter import filter_books
 from analysis.genre import analyze_genre
@@ -355,7 +357,14 @@ def cmd_scrape(args):
     site_name = get_site_name(site)
     rankings_config = get_site_rankings(site)
     _validate_rankings(site, args.rankings)
-    pages = args.pages if args.pages is not None else (FANQIE_MAX_PAGES_PER_RANK if site == "fanqie" else MAX_PAGES_PER_RANK)
+    if args.pages is not None:
+        pages = args.pages
+    elif site == "fanqie":
+        pages = FANQIE_MAX_PAGES_PER_RANK
+    elif site in SHORT_DRAMA_SITES:
+        pages = SHORT_DRAMA_MAX_PAGES_PER_RANK
+    else:
+        pages = MAX_PAGES_PER_RANK
 
     session = QidianSession(proxy=args.proxy, cookie=args.cookie)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -363,6 +372,13 @@ def cmd_scrape(args):
     if site == "fanqie":
         all_data = scrape_all_fanqie_rankings(
             session,
+            rank_keys=args.rankings,
+            max_pages=pages,
+        )
+    elif site in SHORT_DRAMA_SITES:
+        all_data = scrape_all_short_drama_rankings(
+            session,
+            site,
             rank_keys=args.rankings,
             max_pages=pages,
         )
@@ -440,9 +456,9 @@ def cmd_detail(args, books=None):
         print("没有找到榜单数据，请先运行 scrape 命令")
         return
 
-    if site == "fanqie":
+    if site == "fanqie" or site in SHORT_DRAMA_SITES:
         results = books[:args.limit] if args.limit else books
-        print(f"番茄榜单已包含基础详情，复用 {len(results)} 本书（limit={args.limit}）")
+        print(f"{site_name}榜单已包含基础详情，复用 {len(results)} 条记录（limit={args.limit}）")
     else:
         print(f"准备获取 {len(books)} 本书的详情（limit={args.limit}）")
         details_dir = os.path.join(args.output_dir, "details")
@@ -667,11 +683,32 @@ def cmd_ingest(args):
 
 def cmd_full(args):
     """完整流水线"""
-    site_name = get_site_name(_arg_site(args))
+    site = _arg_site(args)
+    site_name = get_site_name(site)
     print("=" * 60)
     print(f"  {site_name}排行榜扫描 - 完整流水线")
     print("=" * 60)
     print()
+
+    if site in SHORT_DRAMA_SITES:
+        print("Step 1/4: 抓取榜单列表...")
+        scrape_result = cmd_scrape(args)
+        print()
+        print("Step 2/4: 固化榜单详情...")
+        args.input = None
+        cmd_detail(args, books=scrape_result["books"])
+        print()
+        print("Step 3/4: 分析题材、标题和跨榜表现...")
+        args.analyses = ["genre", "title", "synopsis", "crossrank"]
+        cmd_analyze(args)
+        print()
+        print("Step 4/4: 生成报告...")
+        cmd_report(args)
+        print()
+        print("=" * 60)
+        print(f"  完成！查看 {os.path.join(args.output_dir, 'reports')} 目录获取报告")
+        print("=" * 60)
+        return
 
     # Step 1: 抓取榜单
     print("Step 1/5: 抓取榜单列表...")
@@ -717,6 +754,9 @@ def main():
   %(prog)s full --site fanqie --pages 1       # 番茄快速测试
   %(prog)s scrape --rankings sanjiang strong  # 起点只抓三江和强推
   %(prog)s scrape --site fanqie --rankings male_read female_new
+  %(prog)s scrape --site douyin --rankings douyin_hot
+  %(prog)s scrape --site hongguo
+  %(prog)s scrape --site kuaishou --rankings kuaishou_all_hot
   %(prog)s detail --limit 20                  # 只获取前20本详情
   %(prog)s analyze --analyses genre title     # 只运行指定分析
   %(prog)s report                             # 生成报告
@@ -743,7 +783,7 @@ def main():
     p_scrape = subparsers.add_parser("scrape", help="抓取榜单列表")
     p_scrape.add_argument("--rankings", nargs="+",
                           default=None, help="指定榜单 (默认当前站点全部)")
-    p_scrape.add_argument("--pages", type=int, default=None, help="最大页数（番茄默认10，其他默认5；番茄不足完整榜单时拒绝发布）")
+    p_scrape.add_argument("--pages", type=int, default=None, help="最大页数（番茄/短剧默认10，起点默认5；不足完整榜单时拒绝发布）")
     p_scrape.add_argument("--strategy", choices=["auto", "desktop", "mobile"],
                           default="auto", help="抓取策略 (默认auto)")
 
@@ -786,7 +826,7 @@ def main():
     p_full = subparsers.add_parser("full", help="完整流水线 (scrape→detail→filter→analyze→report)")
     p_full.add_argument("--rankings", nargs="+",
                         default=None, help="指定榜单")
-    p_full.add_argument("--pages", type=int, default=None, help="最大页数（番茄默认10，其他默认5）")
+    p_full.add_argument("--pages", type=int, default=None, help="最大页数（番茄/短剧默认10，起点默认5）")
     p_full.add_argument("--strategy", choices=["auto", "desktop", "mobile"],
                         default="auto", help="抓取策略")
     p_full.add_argument("--limit", type=int, help="限制详情获取数量")
@@ -796,7 +836,7 @@ def main():
     # 全局选项
     for sub in [p_scrape, p_detail, p_filter, p_analyze, p_report, p_full, p_ingest]:
         sub.add_argument("--site", choices=list(SITE_RANKINGS.keys()), default=DEFAULT_SITE,
-                         help="站点: qidian 或 fanqie (默认qidian)")
+                         help="站点: qidian/fanqie/hongguo/douyin/kuaishou (默认qidian)")
         sub.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="输出目录")
         sub.add_argument("--proxy", help="HTTP代理")
         sub.add_argument("--cookie", help="Cookie字符串")

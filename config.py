@@ -57,14 +57,70 @@ FANQIE_RANKINGS = {
     },
 }
 
+# 短剧榜单使用平台原始公开读取端点。榜单 key 带平台前缀，避免跨平台
+# 合并配置时 ``hot`` / ``new`` 等通用名称互相覆盖。
+HONGGUO_RANKINGS = {
+    "hongguo_hot_all": {
+        "name": "红果热播总榜",
+        "route": "hot-drama",
+        "contentForm": "mixed",
+    },
+    "hongguo_hot_real": {
+        "name": "红果真人剧热播榜",
+        "route": "hot-real-drama",
+        "contentForm": "real_drama",
+    },
+    "hongguo_hot_ai": {
+        "name": "红果AI剧热播榜",
+        "route": "hot-ai-drama",
+        "contentForm": "ai_drama",
+    },
+    "hongguo_hot_comic": {
+        "name": "红果漫剧热播榜",
+        "route": "hot-comic-drama",
+        "contentForm": "comic_drama",
+    },
+}
+
+DOUYIN_RANKINGS = {
+    "douyin_hot": {"name": "抖音短剧热播榜", "billboardType": 1},
+    "douyin_comic": {"name": "抖音短剧漫剧榜", "billboardType": 2},
+    "douyin_new": {"name": "抖音短剧新剧榜", "billboardType": 3},
+    "douyin_interaction": {"name": "抖音短剧互动榜", "billboardType": 4},
+    "douyin_must_watch": {"name": "抖音短剧必看榜", "billboardType": 8},
+}
+
+KUAISHOU_RANKINGS = {
+    "kuaishou_all_hot": {"name": "快手短剧全网热播榜", "classifyId": 13},
+    "kuaishou_recommend": {"name": "快手短剧推荐榜", "classifyId": 0},
+    "kuaishou_hot": {"name": "快手短剧热播榜", "classifyId": 10},
+    "kuaishou_real": {"name": "快手短剧真人榜", "classifyId": 12},
+    "kuaishou_comic": {"name": "快手短剧漫剧榜", "classifyId": 1},
+    "kuaishou_must_watch": {"name": "快手短剧必看榜", "classifyId": 2},
+    "kuaishou_xingmang": {"name": "快手短剧星芒榜", "classifyId": 11},
+    "kuaishou_time_travel": {"name": "快手短剧穿越榜", "classifyId": 9},
+    "kuaishou_costume": {"name": "快手短剧古风榜", "classifyId": 8},
+    "kuaishou_fantasy": {"name": "快手短剧脑洞榜", "classifyId": 7},
+    "kuaishou_family": {"name": "快手短剧家庭榜", "classifyId": 6},
+    "kuaishou_romance": {"name": "快手短剧甜宠榜", "classifyId": 4},
+    "kuaishou_comeback": {"name": "快手短剧逆袭榜", "classifyId": 3},
+    "kuaishou_urban": {"name": "快手短剧都市榜", "classifyId": 5},
+}
+
 DEFAULT_SITE = "qidian"
 SITE_NAMES = {
     "qidian": "起点中文网",
     "fanqie": "番茄小说",
+    "hongguo": "红果短剧",
+    "douyin": "抖音短剧",
+    "kuaishou": "快手短剧",
 }
 SITE_RANKINGS = {
     "qidian": QIDIAN_RANKINGS,
     "fanqie": FANQIE_RANKINGS,
+    "hongguo": HONGGUO_RANKINGS,
+    "douyin": DOUYIN_RANKINGS,
+    "kuaishou": KUAISHOU_RANKINGS,
 }
 ALL_RANKINGS = {
     rank_key: config
@@ -113,6 +169,7 @@ MAX_RETRIES = 3                 # 最大重试次数
 REQUEST_TIMEOUT = 20            # 请求超时（秒）
 MAX_PAGES_PER_RANK = 5          # 每个榜单最大翻页数
 FANQIE_MAX_PAGES_PER_RANK = 10  # 防失控的页数上限；API每页50本，通常两页抓完100名
+SHORT_DRAMA_MAX_PAGES_PER_RANK = 10  # 红果/抖音通常5～7页，留出接口扩容余量
 CONSECUTIVE_403_THRESHOLD = 3   # 触发暂停的连续403次数
 
 # ─── 筛选参数 ──────────────────────────────────────────────────
@@ -127,6 +184,9 @@ QIDIAN_BOOK = "https://book.qidian.com"
 QIDIAN_MOBILE = "https://m.qidian.com"
 QIDIAN_MOBILE_AJAX = "https://m.qidian.com/majax"
 FANQIE_BASE = "https://fanqienovel.com"
+HONGGUO_BASE = "https://hongguoduanju.com"
+DOUYIN_DRAMA_BILLBOARD = "https://api.amemv.com/aweme/v1/series/billboard/"
+KUAISHOU_DRAMA_BILLBOARD = "https://api.e.kuaishou.com/rest/miniSeries/wd/hotRank/queryListNew"
 
 # ─── User-Agent 列表 ──────────────────────────────────────────
 

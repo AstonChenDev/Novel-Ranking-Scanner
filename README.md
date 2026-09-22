@@ -4,9 +4,9 @@
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Qidian%20%7C%20Fanqie-orange)]()
+[![Platform](https://img.shields.io/badge/Platform-5%20sources-orange)]()
 
-**自动抓取起点中文网 · 番茄小说榜单数据，多维度分析题材趋势，生成结构化报告，为网文选题提供数据支撑。**
+**自动抓取起点、番茄、红果、抖音和快手榜单数据，生成可验证的完整快照，为网文与短剧选题提供数据支撑。**
 
 [🇺🇸 English](README_EN.md)
 
@@ -18,7 +18,7 @@
 
 | 功能 | 说明 |
 |:---|:---|
-| 🏆 **双平台覆盖** | 起点中文网 + 番茄小说，8 个核心榜单一键扫榜 |
+| 🏆 **五平台覆盖** | 起点、番茄、红果、抖音、快手榜单使用统一快照协议 |
 | 📊 **7 维分析** | 分类分布、标题模式、简介开篇、作者等级、字数分布、跨榜上榜、新人案例 |
 | 📝 **智能报告** | 自动生成 Markdown 报告，含榜单画像、重点书目、可执行写作建议 |
 | 🔄 **断点续跑** | 详情页单书缓存，中断后无需重头开始 |
@@ -46,6 +46,17 @@
 | 女频阅读榜 | `female_read` | 女频热门阅读 |
 | 女频新书榜 | `female_new` | 女频新书 |
 
+### 短剧平台
+
+| 平台 | 榜单 | 完整性口径 |
+|:---|:---|:---|
+| 红果 | 总热播、真人、AI、漫剧 | 官网每榜 5 页，共 100 部；按 `totalPages` 完整翻页 |
+| 抖音 | 热播、漫剧、新剧、互动、必看 | 每页最多 15 部；按 `has_more/offset` 抓到末页 |
+| 快手 | 全网热播、推荐、热播、真人、漫剧、必看及 8 个题材榜 | 接口一次返回平台定义的完整 Top 19～50 |
+
+短剧字段统一保留排名、简介、封面、题材、内容形态、热度、播放、收藏、点赞、评分、集数、
+时长、账号/出品方、付费/独播状态、平台标签和在榜天数；上游没有的字段为 `null`，不会伪造成 `0`。
+
 </details>
 
 ---
@@ -70,6 +81,11 @@ python main.py full --strategy mobile
 
 # 番茄完整流水线
 python main.py full --site fanqie --pages 2
+
+# 短剧榜单（完整翻页）
+python main.py scrape --site hongguo
+python main.py scrape --site douyin
+python main.py scrape --site kuaishou
 ```
 
 ### 快速测试
@@ -144,7 +160,8 @@ python main.py push --input output/raw/all_rankings_20260919_080000.json
 
 项目根目录的 `run_daily_rank_sync.sh` 默认只抓番茄，再导入独立采集服务；正文由常驻 worker 消费，日榜命令不重复启动 worker。
 请由外部 cron、systemd timer 或容器调度器每天调用，令牌通过 `EXTERNAL_RANK_INGESTION_TOKEN` 或 `RANK_ENV_FILE` 提供。
-每次只导入本批次新文件，不回退历史快照。需要起点时再显式设置 `RANK_SITES=fanqie,qidian`。
+每次只导入本批次新文件，不回退历史快照。需要多平台时显式设置，例如
+`RANK_SITES=fanqie,hongguo,douyin,kuaishou`；默认仍只运行番茄。
 
 番茄已使用官网的 `offset/limit` API：每页50本，普通分类榜100本只需两页。`--pages` 是安全上限，
 如果配置页数不足上游总数，会明确失败，不发布不完整榜单。旧 HTML 只含前10本，不能用 `?page=` 翻页。
@@ -235,7 +252,8 @@ python3 -m unittest discover -s tests
 ├── scraper/
 │   ├── ranking.py           # 起点榜单爬取
 │   ├── detail.py            # 起点详情爬取
-│   └── fanqie.py            # 番茄榜单爬取
+│   ├── fanqie.py            # 番茄榜单爬取
+│   └── short_drama.py       # 红果、抖音、快手短剧榜单与完整性保护
 ├── analysis/
 │   ├── filter.py            # 筛选逻辑
 │   ├── genre.py             # 分类分布

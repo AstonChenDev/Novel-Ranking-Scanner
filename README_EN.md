@@ -4,9 +4,9 @@
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Qidian%20%7C%20Fanqie-orange)]()
+[![Platform](https://img.shields.io/badge/Platform-5%20sources-orange)]()
 
-**Automated ranking scraper for Qidian & Fanqie Novel. Analyze genre trends, title patterns, synopsis hooks, author levels, and more — all in a structured Markdown report.**
+**Automated ranking scanner for Qidian, Fanqie, Hongguo, Douyin, and Kuaishou, with verified complete snapshots and structured reports for novel and short-drama research.**
 
 [🇨🇳 中文](README.md)
 
@@ -18,7 +18,7 @@
 
 | Feature | Description |
 |:---|:---|
-| 🏆 **Dual Platform** | Scrape 8 core rankings from Qidian (起点) and Fanqie (番茄) in one command |
+| 🏆 **Five Sources** | One snapshot contract for Qidian, Fanqie, Hongguo, Douyin, and Kuaishou rankings |
 | 📊 **7-Dimension Analysis** | Genre distribution, title patterns, synopsis hooks, author levels, word count, cross-rank overlap, newbie cases |
 | 📝 **Smart Report** | Auto-generated Markdown report with rank portraits, highlight books, and actionable writing tips |
 | 🔄 **Checkpoint Resume** | Per-book detail caching — resume from where you left off |
@@ -46,6 +46,18 @@
 | Female Read | `female_read` | Female channel popular reads |
 | Female New | `female_new` | Female channel new books |
 
+### Short-drama platforms
+
+| Platform | Rankings | Completeness rule |
+|:---|:---|:---|
+| Hongguo | Overall, live action, AI, comic | Follow the official site's `totalPages` to the last page (currently 100 items per list) |
+| Douyin | Hot, comic, new, interaction, must-watch | Follow `has_more` and `offset` until the terminal page |
+| Kuaishou | Overall, recommendation, format, must-watch, and topic lists | Validate the platform-defined complete Top list returned by each category |
+
+Short-drama output keeps ranking, synopsis, cover, genres, content form, heat, plays, favorites,
+likes, rating, episode counts, duration, publisher/account, paid/exclusive status, platform labels, and days on chart.
+Unavailable upstream values remain `null`; they are never fabricated as zero.
+
 </details>
 
 ---
@@ -70,6 +82,11 @@ python main.py full --strategy mobile
 
 # Fanqie full pipeline
 python main.py full --site fanqie --pages 1
+
+# Complete short-drama rankings
+python main.py scrape --site hongguo
+python main.py scrape --site douyin
+python main.py scrape --site kuaishou
 ```
 
 ### Quick Test

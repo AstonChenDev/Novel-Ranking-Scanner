@@ -45,6 +45,31 @@ def _int_or_none(value: Any) -> Optional[int]:
         return None
 
 
+def _float_or_none(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bool_or_none(value: Any) -> Optional[bool]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1"}:
+            return True
+        if normalized in {"false", "no", "0"}:
+            return False
+    return None
+
+
 def _iso_utc(value: Any = None) -> str:
     """返回可排序的 UTC ISO 时间，兼容旧输出中的本地时间字符串。"""
     if value:
@@ -100,6 +125,27 @@ def _normalise_book(book: Mapping[str, Any], *, site: str, rank_type: Optional[s
         "read_count": _int_or_none(_book_value(book, "readCount", "read_count")),
         "cover_url": _text(_book_value(book, "coverUrl", "cover_url", "thumbUri")),
         "latest_chapter": _text(_book_value(book, "latestChapter", "latest_chapter", "lastChapterTitle")),
+        # 跨平台短剧字段统一使用 snake_case；写入服务把它们保存到书目及
+        # 快照 metadata，不把某个平台的私有命名扩散到读 API。
+        "content_kind": _text(_book_value(book, "contentKind", "content_kind")),
+        "content_form": _text(_book_value(book, "contentForm", "content_form")),
+        "publisher": _text(_book_value(book, "publisher", "copyright", "copyrightOwner")),
+        "heat_value": _int_or_none(_book_value(book, "heatValue", "heat_value")),
+        "heat_text": _text(_book_value(book, "heatText", "heat_text")),
+        "play_count": _int_or_none(_book_value(book, "playCount", "play_count")),
+        "collect_count": _int_or_none(_book_value(book, "collectCount", "collect_count")),
+        "like_count": _int_or_none(_book_value(book, "likeCount", "like_count")),
+        "rating": _float_or_none(_book_value(book, "rating", "score")),
+        "episode_count": _int_or_none(_book_value(book, "episodeCount", "episode_count")),
+        "updated_episode_count": _int_or_none(_book_value(book, "updatedEpisodeCount", "updated_episode_count")),
+        "duration_seconds": _int_or_none(_book_value(book, "durationSeconds", "duration_seconds")),
+        "is_charged": _bool_or_none(_book_value(book, "isCharged", "is_charged")),
+        "is_exclusive": _bool_or_none(_book_value(book, "isExclusive", "is_exclusive")),
+        "source_updated_at": _text(_book_value(book, "sourceUpdatedAt", "source_updated_at")),
+        "tags": _book_value(book, "tags") or [],
+        "platform_label": _text(_book_value(book, "platformLabel", "platform_label")),
+        "platform_labels": _book_value(book, "platformLabels", "platform_labels") or [],
+        "days_on_chart": _int_or_none(_book_value(book, "daysOnChart", "days_on_chart")),
     }
 
     # site 是源级字段，但书行也带上它，方便服务端批量校验和以后重放。
@@ -115,6 +161,14 @@ def _normalise_book(book: Mapping[str, Any], *, site: str, rank_type: Optional[s
         "thumbUri", "latestChapter", "latest_chapter", "lastChapterTitle", "site",
         "rankAppearances", "ranks", "rankScopeKey", "rank_scope_key", "scopeKey", "scope_key",
         "rankScopeName", "rank_scope_name", "scopeName", "scope_name", "fanqieCategoryId",
+        "contentKind", "content_kind", "contentForm", "content_form", "publisher", "copyright",
+        "copyrightOwner", "heatValue", "heat_value", "heatText", "heat_text", "playCount",
+        "play_count", "collectCount", "collect_count", "likeCount", "like_count", "rating", "score",
+        "episodeCount", "episode_count", "updatedEpisodeCount", "updated_episode_count",
+        "durationSeconds", "duration_seconds", "sourceUpdatedAt", "source_updated_at", "tags",
+        "isCharged", "is_charged", "isExclusive", "is_exclusive",
+        "platformLabel", "platform_label", "platformLabels", "platform_labels", "daysOnChart",
+        "days_on_chart",
     }
     extra = {str(key): value for key, value in book.items() if key not in known and value not in (None, "", [])}
     if extra:

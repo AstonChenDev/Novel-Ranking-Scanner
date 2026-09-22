@@ -85,6 +85,34 @@ class IngestionPayloadTest(unittest.TestCase):
         self.assertEqual(payload["count"], 2)
         self.assertEqual({row["rank_scope_key"] for row in payload["books"]}, {"1141", "1142"})
 
+    def test_short_drama_author_fields_are_normalized_without_losing_extensions(self):
+        payload = build_ingestion_payload({
+            "site": "douyin",
+            "timestamp": "2026-09-23T08:30:00+08:00",
+            "rankings": {
+                "douyin_hot": [{
+                    "bookId": "series-1", "title": "短剧甲", "author": "剧场账号",
+                    "category": "逆袭", "synopsis_short": "简介", "rankPosition": 1,
+                    "rankScopeKey": "1", "rankScopeName": "总榜",
+                    "contentKind": "short_drama", "contentForm": "comic_drama",
+                    "publisher": "出品公司", "heatValue": 8000000, "playCount": 120000000,
+                    "collectCount": 340000, "episodeCount": 88, "durationSeconds": 7200,
+                    "isCharged": False, "isExclusive": True,
+                    "tags": ["逆袭", "年代"], "creatorId": "creator-1",
+                }],
+            },
+        })
+        row = payload["books"][0]
+        self.assertEqual("short_drama", row["content_kind"])
+        self.assertEqual("comic_drama", row["content_form"])
+        self.assertEqual(120000000, row["play_count"])
+        self.assertEqual(340000, row["collect_count"])
+        self.assertEqual(88, row["episode_count"])
+        self.assertIs(row["is_charged"], False)
+        self.assertIs(row["is_exclusive"], True)
+        self.assertEqual(["逆袭", "年代"], row["tags"])
+        self.assertEqual("creator-1", row["extra"]["creatorId"])
+
 
 class IngestionHttpTest(unittest.TestCase):
     def test_retries_transient_failure(self):
