@@ -188,8 +188,10 @@ class HongguoTest(unittest.TestCase):
 
 class KuaishouTest(unittest.TestCase):
     def test_single_response_is_complete_platform_top_list(self):
+        first = kuaishou_row(1)
+        first["coverImg"] = "http://ty2.a.kwimgs.com/bs2/courseHead/cover.jpg?width=512"
         payload = {"result": 1, "data": {"tabHotListDetail": {
-            "id": 13, "content": [kuaishou_row(1), kuaishou_row(2)],
+            "id": 13, "content": [first, kuaishou_row(2)],
         }, "selectTabIndex": 0, "tabListInfo": [{"id": 13, "desc": "全网热播榜", "index": 0}]}}
         session = FakeSession([Response(payload)])
         items = scrape_kuaishou_ranking(session, "kuaishou_all_hot")
@@ -198,6 +200,7 @@ class KuaishouTest(unittest.TestCase):
         self.assertEqual(2, items[0]["daysOnChart"])
         self.assertEqual(88, items[0]["episodeCount"])
         self.assertEqual("新", items[0]["platformLabel"])
+        self.assertEqual("https://ty2.a.kwimgs.com/bs2/courseHead/cover.jpg?width=512", items[0]["coverUrl"])
         self.assertEqual(1, len(session.urls))
 
     def test_rank_gap_aborts(self):

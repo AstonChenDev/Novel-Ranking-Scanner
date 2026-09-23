@@ -12,7 +12,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
@@ -90,6 +90,21 @@ def _first_url(value: Any) -> str:
     if isinstance(value, list) and value:
         return _text(value[0])
     return _text(value)
+
+
+def _secure_kuaishou_cover_url(value: Any) -> str:
+    """仅把快手已知图片域的明文地址升级为同路径 HTTPS。"""
+    url = _text(value)
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        trusted = any(host == domain or host.endswith("." + domain) for domain in ("yximgs.com", "kwimgs.com"))
+        if (parts.scheme == "http" and trusted and parts.port is None
+                and parts.username is None and parts.password is None):
+            return urlunsplit(("https", parts.netloc, parts.path, parts.query, parts.fragment))
+    except ValueError:
+        return url
+    return url
 
 
 def _iso_from_timestamp(value: Any) -> str:
@@ -457,7 +472,7 @@ def _kuaishou_item(raw: Mapping[str, Any], rank_key: str, position: int) -> dict
         "rankPosition": rank,
         "rankScopeKey": "total",
         "rankScopeName": "总榜",
-        "coverUrl": _text(raw.get("coverImg")),
+        "coverUrl": _secure_kuaishou_cover_url(raw.get("coverImg")),
         "detailUrl": _text(raw.get("seriesJumpUrl")),
         "contentKind": "short_drama",
         "contentForm": content_form,
